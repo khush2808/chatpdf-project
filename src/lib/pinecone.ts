@@ -123,27 +123,38 @@ export async function loadS3IntoPinecone(fileKey: string) {
 }
 
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  // For now, return a placeholder text
-  // In a real implementation, you would use a proper PDF parsing library
-  // that works well in Node.js environments
-  // The buffer parameter would be used to parse the actual PDF content
   console.log(`📄 Processing PDF buffer of size: ${buffer.length} bytes`);
 
-  return `This is a placeholder text for the PDF content. 
-  In a production environment, you would implement proper PDF text extraction here.
-  The actual PDF content would be extracted and processed for embedding.
-  
-  This placeholder ensures the pipeline works for testing purposes.
-  The PDF file has been successfully downloaded and is ready for processing.
-  
-  To implement proper PDF text extraction, consider using libraries like:
-  - pdf-parse
-  - pdf2pic
-  - Or a cloud service like AWS Textract
-  
-  For now, this placeholder allows the embedding pipeline to work and test
-  the rest of the functionality including chunking, embedding generation,
-  and Pinecone vector storage.`;
+  try {
+    // Import pdf-parse with ES6 import syntax
+    const pdfParse = (await import("pdf-parse")).default;
+
+    // Parse the PDF buffer using pdf-parse
+    const data = await pdfParse(buffer);
+
+    // Extract text content
+    const text = data.text;
+
+    // Clean up the text by removing excessive whitespace and normalizing
+    const cleanedText = text
+      .replace(/\s+/g, " ") // Replace multiple whitespace with single space
+      .replace(/\n\s*\n/g, "\n") // Remove empty lines
+      .trim();
+
+    console.log(`✅ PDF parsed successfully:`);
+    console.log(`   - Pages: ${data.numpages}`);
+    console.log(`   - Text length: ${cleanedText.length} characters`);
+    console.log(`   - Text preview: "${cleanedText.substring(0, 100)}..."`);
+
+    return cleanedText;
+  } catch (error) {
+    console.error("❌ Error parsing PDF:", error);
+    throw new Error(
+      `Failed to parse PDF: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 }
 
 function splitTextIntoChunks(text: string): DocumentChunk[] {
