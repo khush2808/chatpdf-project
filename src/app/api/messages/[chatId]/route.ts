@@ -8,16 +8,26 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { chatId: string } }
 ) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    const chatId = parseInt(params.chatId);
+    // 1. Authentication check
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized - Please sign in" },
+        { status: 401 }
+      );
+    }
 
-    // Verify the chat belongs to the user
+    // 2. Validate chatId parameter
+    const chatId = parseInt(params.chatId);
+    if (isNaN(chatId) || chatId <= 0) {
+      return NextResponse.json(
+        { error: "Invalid chat ID" },
+        { status: 400 }
+      );
+    }
+
+    // 3. Verify the chat belongs to the user
     const chat = await db
       .select()
       .from(chats)
@@ -25,21 +35,46 @@ export async function GET(
       .limit(1);
 
     if (!chat.length) {
-      return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Chat not found or access denied" },
+        { status: 404 }
+      );
     }
 
-    // Get all messages for this chat
+    // 4. Get all messages for this chat
     const chatMessages = await db
-      .select()
+      .select({
+        id: messages.id,
+        content: messages.content,
+        role: messages.role,
+        createdAt: messages.createdAt,
+        chatId: messages.chatId,
+      })
       .from(messages)
       .where(eq(messages.chatId, chatId))
       .orderBy(messages.createdAt);
 
+    console.log(`Retrieved ${chatMessages.length} messages for chat ${chatId}`);
+
     return NextResponse.json(chatMessages);
   } catch (error) {
     console.error("Error fetching messages:", error);
+    
+    // Handle specific error types
+    if (error instanceof Error) {
+      if (error.message.includes("database")) {
+        return NextResponse.json(
+          { error: "Database connection error" },
+          { status: 500 }
+        );
+      }
+    }
+
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { 
+        error: "Failed to load messages",
+        details: (globalThis as any).process?.env?.NODE_ENV === "development" ? error instanceof Error ? error.message : "Unknown error" : undefined
+      },
       { status: 500 }
     );
   }
