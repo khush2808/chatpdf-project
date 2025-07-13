@@ -35,119 +35,47 @@ export const getPineconeClient = async () => {
 };
 
 export async function loadS3IntoPinecone(fileKey: string) {
-  // Dynamic imports to prevent bundling server-only modules
-  const { downloadFromS3 } = await import("./s3-server");
-  const fs = await import("fs");
-  const pdf = (await import("pdf-parse")).default;
-  const md5 = (await import("md5")).default;
+  // Import the PDF processor module dynamically (server-only)
+  const { downloadAndProcessPDF, prepareDocument, createDocumentHash } =
+    await import("./pdf-processor");
 
-  // 1. obtain the pdf -> download and read from pdf
-  console.log("downloading s3 into file system");
-  const file_name = await downloadFromS3(fileKey);
-  if (!file_name) {
-    throw new Error("Could not download from s3");
-  }
-  console.log("loading pdf into memory: " + file_name);
-
-  // 2. split and segment the pdf
-  const docs = await loadPDF(file_name, fs, pdf);
-
-  // 3. split and segment the pdf into smaller documents
-  const documents = await Promise.all(docs.map(prepareDocument));
-
-  // 4. vectorise and embed individual documents
-  const vectors = await Promise.all(
-    documents.flat().map((doc) => embedDocument(doc, md5))
-  );
-
-  // 5. upload to pinecone
-  const client = await getPineconeClient();
-  const pineconeIndex = await client.index("chatpdf");
-  const namespace = pineconeIndex.namespace(convertToAscii(fileKey));
-
-  console.log("inserting vectors into pinecone");
-  await namespace.upsert(vectors);
-
-  return documents[0];
-}
-
-// Load PDF using pdf-parse instead of langchain
-async function loadPDF(filePath: string, fs: any, pdf: any) {
-  const buffer = fs.readFileSync(filePath);
-  const data = await pdf(buffer);
-
-  // Split text into pages (rough approximation)
-  const pages = data.text.split("\n\n\n"); // Assuming page breaks are marked by triple newlines
-
-  return pages.map((pageContent: string, index: number) => ({
-    pageContent,
-    metadata: {
-      loc: { pageNumber: index + 1 },
-      pdf: {
-        info: data.info || {},
-        metadata: data.metadata || {},
-        totalPages: pages.length,
-      },
-    },
-  }));
-}
-
-async function embedDocument(doc: any, md5: any) {
   try {
-    const embeddings = await getEmbeddings(doc.pageContent);
-    const hash = md5(doc.pageContent);
+    // 1. Download and parse PDF
+    const docs = await downloadAndProcessPDF(fileKey);
 
-    return {
-      id: hash,
-      values: embeddings,
-      metadata: {
-        text: doc.metadata.text,
-        pageNumber: doc.metadata.pageNumber,
-      },
-    } as any;
+    // 2. Split and segment the pdf into smaller documents
+    const documents = await Promise.all(docs.map(prepareDocument));
+
+    // 3. Vectorise and embed individual documents
+    const vectors = await Promise.all(
+      documents.flat().map(async (doc) => {
+        const embeddings = await getEmbeddings(doc.pageContent);
+        const hash = createDocumentHash(doc.pageContent);
+
+        return {
+          id: hash,
+          values: embeddings,
+          metadata: {
+            text: doc.metadata.text,
+            pageNumber: doc.metadata.pageNumber,
+          },
+        };
+      })
+    );
+
+    // 4. Upload to pinecone
+    const client = await getPineconeClient();
+    const pineconeIndex = await client.index("chatpdf");
+    const namespace = pineconeIndex.namespace(convertToAscii(fileKey));
+
+    console.log("inserting vectors into pinecone");
+    await namespace.upsert(vectors);
+
+    return documents[0];
   } catch (error) {
-    console.log("error embedding document", error);
+    console.error("Error in loadS3IntoPinecone:", error);
     throw error;
   }
-}
-
-export const truncateStringByBytes = (str: string, bytes: number) => {
-  const enc = new TextEncoder();
-  return new TextDecoder("utf-8").decode(enc.encode(str).slice(0, bytes));
-};
-
-// Simple text splitter to replace langchain's RecursiveCharacterTextSplitter
-function splitText(
-  text: string,
-  chunkSize: number = 1000,
-  overlap: number = 200
-): string[] {
-  const chunks: string[] = [];
-  let start = 0;
-
-  while (start < text.length) {
-    const end = Math.min(start + chunkSize, text.length);
-    chunks.push(text.slice(start, end));
-    start = end - overlap;
-  }
-
-  return chunks;
-}
-
-async function prepareDocument(page: any) {
-  let { pageContent, metadata } = page;
-  pageContent = pageContent.replace(/\n/g, " ");
-
-  // Split the document into smaller chunks
-  const chunks = splitText(pageContent, 1000, 200);
-
-  return chunks.map((chunk) => ({
-    pageContent: chunk,
-    metadata: {
-      pageNumber: metadata.loc.pageNumber,
-      text: truncateStringByBytes(chunk, 36000),
-    },
-  }));
 }
 
 export async function getEmbeddings(text: string) {

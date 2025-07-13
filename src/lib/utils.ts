@@ -10,3 +10,8 @@ export function convertToAscii(inputString: string): string {
   const asciiString = inputString.replace(/[^\x00-\x7F]+/g, "");
   return asciiString;
 }
+
+export const truncateStringByBytes = (str: string, bytes: number) => {
+  const enc = new TextEncoder();
+  return new TextDecoder("utf-8").decode(enc.encode(str).slice(0, bytes));
+};
