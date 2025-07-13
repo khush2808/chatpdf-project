@@ -3,57 +3,121 @@ import fs from "fs";
 import md5 from "md5";
 import { truncateStringByBytes } from "./utils";
 
-// Load PDF using pdfjs-dist
-export async function loadPDF(filePath: string) {
-  try {
-    // Dynamic import of pdfjs-dist to prevent bundling issues
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+// We will lazily import heavy, server-only dependencies so that they are **never** bundled
+// into the client build. These are only required inside a Node.js runtime.
+type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+type PdfParse = typeof import("pdf-parse");
 
-    // Read file buffer
-    const buffer = fs.readFileSync(filePath);
-    const uint8Array = new Uint8Array(buffer);
+/**
+ * Internal helper that tries to extract text from a PDF via **pdfjs-dist**.
+ * Throws on failure so the caller can continue with fallback strategies.
+ */
+async function parseWithPdfJs(filePath: string) {
+  const pdfjs: PdfJs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-    // Load PDF document
-    const pdf = await pdfjs.getDocument({ data: uint8Array }).promise;
+  // Read file buffer & convert to Uint8Array for pdf-js
+  const buffer = fs.readFileSync(filePath);
+  const uint8Array = new Uint8Array(buffer);
 
-    const pages = [];
+  const pdf = await pdfjs.getDocument({ data: uint8Array }).promise;
 
-    // Extract text from each page
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
+  const pages: FilePage[] = [];
 
-      // Combine all text items into a single string
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
 
-      pages.push({
-        pageContent: pageText,
-        metadata: {
-          loc: { pageNumber: i },
-          pdf: {
-            info: {
-              Title: "",
-              Author: "",
-              Subject: "",
-              Keywords: "",
-              Creator: "",
-              Producer: "",
-              CreationDate: new Date(),
-              ModDate: new Date(),
-              PDFFormatVersion: "1.0",
-            },
-            metadata: {},
-            totalPages: pdf.numPages,
-          },
+    const pageText = textContent.items.map((item: any) => item.str).join(" ");
+
+    pages.push({
+      pageContent: pageText,
+      metadata: {
+        loc: { pageNumber: i },
+        pdf: {
+          info: pdf!.info ?? {},
+          metadata: {},
+          totalPages: pdf.numPages,
         },
-      });
-    }
-
-    return pages;
-  } catch (error) {
-    console.error("Error parsing PDF:", error);
-    throw error;
+      },
+    });
   }
+
+  return pages;
+}
+
+/**
+ * Fallback parser that uses **pdf-parse** which sometimes succeeds on PDF files
+ * that pdf-js cannot handle (e.g. certain encrypted or malformed files).
+ * pdf-parse only returns a single block of text, so we split it up into pseudo
+ * pages of equal length.
+ */
+async function parseWithPdfParse(filePath: string) {
+  // pdf-parse's default export is a function. We cast to `any` to avoid type
+  // issues because the library ships without typings.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  const pdfParse: any = (await import("pdf-parse")).default;
+  const buffer = fs.readFileSync(filePath);
+  const data = await pdfParse(buffer);
+
+  // pdf-parse does not preserve page separation in a structured way, but it
+  // annotates the text with form-feed (\f) characters per page so we can use
+  // those as delimiters. If none are present, treat the entire document as a
+  // single page.
+  const rawPages = data.text.split("\f");
+
+  return rawPages.map((pageText: string, idx: number) => ({
+    pageContent: pageText.trim(),
+    metadata: {
+      loc: { pageNumber: idx + 1 },
+      pdf: {
+        info: data.info ?? {},
+        metadata: data.metadata ?? {},
+        totalPages: rawPages.length,
+      },
+    },
+  })) as FilePage[];
+}
+
+/**
+ * A **single** page of a PDF with minimal metadata – kept intentionally
+ * compatible with downstream usage in the Pinecone pipeline.
+ */
+export interface FilePage {
+  pageContent: string;
+  metadata: {
+    loc: { pageNumber: number };
+    pdf: {
+      info: Record<string, unknown>;
+      metadata: any;
+      totalPages: number;
+    };
+  };
+}
+
+/**
+ * Attempts to extract text from the given PDF file using multiple strategies.
+ * 1. pdfjs-dist (fast & accurate)
+ * 2. pdf-parse (good at some encrypted/corrupted variants)
+ * 3. (TODO) OCR fallback – placeholder for now
+ */
+export async function loadPDF(filePath: string): Promise<FilePage[]> {
+  // Strategy 1 – pdfjs-dist
+  try {
+    return await parseWithPdfJs(filePath);
+  } catch (err) {
+    console.warn("pdfjs-dist failed – falling back to pdf-parse", err);
+  }
+
+  // Strategy 2 – pdf-parse
+  try {
+    return await parseWithPdfParse(filePath);
+  } catch (err) {
+    console.warn("pdf-parse failed", err);
+  }
+
+  // Future Strategy 3 – OCR fallback (image-based PDFs)
+  // For now, throw an error so the caller can handle gracefully.
+  throw new Error("Unable to extract text from PDF using available strategies");
 }
 
 // Simple text splitter
