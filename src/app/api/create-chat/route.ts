@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest,res: NextResponse){
     
@@ -6,8 +6,8 @@ export async function POST(req: NextRequest,res: NextResponse){
         const body = await req.json();
     const {file_key,file_name} = body;
 
-        const chat = await db.insert(chats).values({
     } catch (error) {
-        
+        console.log(error);
+        return NextResponse.json({error:"Internal Server Error"},{status:500})
     }
 }
