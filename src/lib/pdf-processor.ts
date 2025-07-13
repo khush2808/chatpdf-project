@@ -1,29 +1,55 @@
 import { downloadFromS3 } from "./s3-server";
 import fs from "fs";
-import pdf from "pdf-parse";
 import md5 from "md5";
 import { truncateStringByBytes } from "./utils";
 
-// Load PDF using pdf-parse
+// Load PDF using pdfjs-dist
 export async function loadPDF(filePath: string) {
   try {
+    // Dynamic import of pdfjs-dist to prevent bundling issues
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+
+    // Read file buffer
     const buffer = fs.readFileSync(filePath);
-    const data = await pdf(buffer);
+    const uint8Array = new Uint8Array(buffer);
 
-    // Split text into pages (rough approximation)
-    const pages = data.text.split("\n\n\n"); // Assuming page breaks are marked by triple newlines
+    // Load PDF document
+    const pdf = await pdfjs.getDocument({ data: uint8Array }).promise;
 
-    return pages.map((pageContent: string, index: number) => ({
-      pageContent,
-      metadata: {
-        loc: { pageNumber: index + 1 },
-        pdf: {
-          info: data.info || {},
-          metadata: data.metadata || {},
-          totalPages: pages.length,
+    const pages = [];
+
+    // Extract text from each page
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+
+      // Combine all text items into a single string
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+
+      pages.push({
+        pageContent: pageText,
+        metadata: {
+          loc: { pageNumber: i },
+          pdf: {
+            info: {
+              Title: "",
+              Author: "",
+              Subject: "",
+              Keywords: "",
+              Creator: "",
+              Producer: "",
+              CreationDate: new Date(),
+              ModDate: new Date(),
+              PDFFormatVersion: "1.0",
+            },
+            metadata: {},
+            totalPages: pdf.numPages,
+          },
         },
-      },
-    }));
+      });
+    }
+
+    return pages;
   } catch (error) {
     console.error("Error parsing PDF:", error);
     throw error;
