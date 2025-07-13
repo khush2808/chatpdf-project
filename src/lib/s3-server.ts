@@ -2,6 +2,7 @@ import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs";
 import os from "os";
 import path from "path";
+import { Readable } from "stream";
 
 export async function downloadFromS3(file_key: string): Promise<string> {
   try {
@@ -29,31 +30,26 @@ export async function downloadFromS3(file_key: string): Promise<string> {
     const fileName = path.basename(file_key);
     const tempFilePath = path.join(tempDir, fileName);
 
-    // Convert stream to buffer
-    const stream = response.Body as ReadableStream;
-    const chunks: Uint8Array[] = [];
-    const reader = stream.getReader();
+    // Handle Node.js stream properly
+    const stream = response.Body as Readable;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-    }
+    return new Promise((resolve, reject) => {
+      const writeStream = fs.createWriteStream(tempFilePath);
 
-    // Combine all chunks into a single buffer
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const buffer = new Uint8Array(totalLength);
-    let offset = 0;
+      stream.pipe(writeStream);
 
-    for (const chunk of chunks) {
-      buffer.set(chunk, offset);
-      offset += chunk.length;
-    }
+      writeStream.on("finish", () => {
+        resolve(tempFilePath);
+      });
 
-    // Write the buffer to a temporary file
-    fs.writeFileSync(tempFilePath, buffer);
+      writeStream.on("error", (error) => {
+        reject(error);
+      });
 
-    return tempFilePath;
+      stream.on("error", (error) => {
+        reject(error);
+      });
+    });
   } catch (error) {
     console.error("Error downloading from S3:", error);
     throw error;
