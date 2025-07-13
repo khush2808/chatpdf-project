@@ -3,6 +3,7 @@ import { UserButton } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { ArrowRight, LogIn } from "lucide-react";
+import FileUpload from "@/components/FileUpload";
 
 
 export default async function Home() {
@@ -45,7 +46,7 @@ export default async function Home() {
             answer questions and understand research with AI
           </p>
 
-          {/* <div className="w-full mt-4">
+          <div className="w-full mt-4">
             {isAuth ? (
               <FileUpload />
             ) : (
@@ -56,7 +57,7 @@ export default async function Home() {
                 </Button>
               </Link>
             )}
-          </div> */}
+          </div>
         </div>
       </div>
     </div>
