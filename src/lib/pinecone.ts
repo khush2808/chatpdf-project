@@ -1,9 +1,5 @@
 import { Pinecone } from "@pinecone-database/pinecone";
 import { convertToAscii } from "./utils";
-import { downloadFromS3 } from "./s3-server";
-import fs from "fs";
-import pdf from "pdf-parse";
-import md5 from "md5";
 
 export type FileChunk = {
   pageContent: string;
@@ -39,6 +35,12 @@ export const getPineconeClient = async () => {
 };
 
 export async function loadS3IntoPinecone(fileKey: string) {
+  // Dynamic imports to prevent bundling server-only modules
+  const { downloadFromS3 } = await import("./s3-server");
+  const fs = await import("fs");
+  const pdf = (await import("pdf-parse")).default;
+  const md5 = (await import("md5")).default;
+
   // 1. obtain the pdf -> download and read from pdf
   console.log("downloading s3 into file system");
   const file_name = await downloadFromS3(fileKey);
@@ -48,13 +50,15 @@ export async function loadS3IntoPinecone(fileKey: string) {
   console.log("loading pdf into memory: " + file_name);
 
   // 2. split and segment the pdf
-  const docs = await loadPDF(file_name);
+  const docs = await loadPDF(file_name, fs, pdf);
 
   // 3. split and segment the pdf into smaller documents
   const documents = await Promise.all(docs.map(prepareDocument));
 
   // 4. vectorise and embed individual documents
-  const vectors = await Promise.all(documents.flat().map(embedDocument));
+  const vectors = await Promise.all(
+    documents.flat().map((doc) => embedDocument(doc, md5))
+  );
 
   // 5. upload to pinecone
   const client = await getPineconeClient();
@@ -68,7 +72,7 @@ export async function loadS3IntoPinecone(fileKey: string) {
 }
 
 // Load PDF using pdf-parse instead of langchain
-async function loadPDF(filePath: string) {
+async function loadPDF(filePath: string, fs: any, pdf: any) {
   const buffer = fs.readFileSync(filePath);
   const data = await pdf(buffer);
 
@@ -88,7 +92,7 @@ async function loadPDF(filePath: string) {
   }));
 }
 
-async function embedDocument(doc: any) {
+async function embedDocument(doc: any, md5: any) {
   try {
     const embeddings = await getEmbeddings(doc.pageContent);
     const hash = md5(doc.pageContent);
