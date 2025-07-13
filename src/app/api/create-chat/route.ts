@@ -4,6 +4,16 @@ import { db } from "@/lib/db";
 import { chats } from "@/lib/db/schema";
 import { getS3Url } from "@/lib/s3";
 import { auth } from "@clerk/nextjs/server";
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Request body schema – ensures we get the minimal data required to kick off
+// PDF processing & chat creation.
+// ---------------------------------------------------------------------------
+const CreateChatSchema = z.object({
+  file_key: z.string().min(1),
+  file_name: z.string().min(1),
+});
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -13,16 +23,26 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const body = await req.json();
-    const { file_key, file_name } = body;
+    const json = await req.json();
+
+    // Validate input; reply 400 on failure without leaking internals.
+    const parsed = CreateChatSchema.safeParse(json);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request payload" },
+        { status: 400 }
+      );
+    }
+
+    const { file_key, file_name } = parsed.data;
 
     console.log("Processing file:", file_key, file_name);
 
     // Load the PDF into Pinecone (this processes the PDF and creates embeddings)
-    const pages = await loadS3IntoPinecone(file_key);
+    await loadS3IntoPinecone(file_key);
 
     // Create a new chat entry in the database
-    const chat_id = await db
+    const chatResult = await db
       .insert(chats)
       .values({
         fileKey: file_key,
@@ -34,11 +54,13 @@ export async function POST(req: NextRequest) {
         insertedId: chats.id,
       });
 
-    console.log("Chat created with ID:", chat_id[0].insertedId);
+    const chat_id = chatResult[0].insertedId;
+
+    console.log("Chat created with ID:", chat_id);
 
     return NextResponse.json(
       {
-        chat_id: chat_id[0].insertedId,
+        chat_id,
         message: "PDF processed and chat created successfully",
       },
       { status: 200 }
