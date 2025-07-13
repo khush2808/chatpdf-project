@@ -4,6 +4,7 @@ import { promises as fs } from "fs";
 import md5 from "md5";
 import { getEmbeddings } from "./embeddings";
 import { convertToAscii } from "./utils";
+import { PDFLoader } from "@langchain/community/document_loaders/web/pdf";
 
 export const getPineconeClient = () => {
   console.log("🔧 Initializing Pinecone client...");
@@ -124,31 +125,24 @@ export async function loadS3IntoPinecone(fileKey: string) {
 
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   console.log(`📄 Processing PDF buffer of size: ${buffer.length} bytes`);
-
   try {
-    // Import pdf-parse with ES6 import syntax
-    const pdfParse = (await import("pdf-parse")).default;
-
-    // Parse the PDF buffer using pdf-parse
-    const data = await pdfParse(buffer);
-
-    // Extract text content
-    const text = data.text;
-
-    // Clean up the text by removing excessive whitespace and normalizing
-    const cleanedText = text
-      .replace(/\s+/g, " ") // Replace multiple whitespace with single space
-      .replace(/\n\s*\n/g, "\n") // Remove empty lines
+    // Use LangChain's PDFLoader to extract text from the PDF buffer
+    const loader = new PDFLoader(new Blob([buffer]), {
+      parsedItemSeparator: "\n",
+    });
+    const docs = await loader.load();
+    // Concatenate all page texts
+    const fullText = docs.map((doc) => doc.pageContent).join("\n");
+    const cleanedText = fullText
+      .replace(/\s+/g, " ")
+      .replace(/\n\s*\n/g, "\n")
       .trim();
-
     console.log(`✅ PDF parsed successfully:`);
-    console.log(`   - Pages: ${data.numpages}`);
     console.log(`   - Text length: ${cleanedText.length} characters`);
     console.log(`   - Text preview: "${cleanedText.substring(0, 100)}..."`);
-
     return cleanedText;
   } catch (error) {
-    console.error("❌ Error parsing PDF:", error);
+    console.error("❌ Error parsing PDF with LangChain PDFLoader:", error);
     throw new Error(
       `Failed to parse PDF: ${
         error instanceof Error ? error.message : String(error)
