@@ -35,43 +35,69 @@ export const getPineconeClient = async () => {
 };
 
 export async function loadS3IntoPinecone(fileKey: string) {
-  // Import the PDF processor module dynamically (server-only)
+  // Import the PDF processor module dynamically (keeps client bundle slim)
   const { downloadAndProcessPDF, prepareDocument, createDocumentHash } =
     await import("./pdf-processor");
 
   try {
-    // 1. Download and parse PDF
-    const docs = await downloadAndProcessPDF(fileKey);
+    // ------------------------------------------------------------------
+    // 1. Download & parse PDF into array of pages
+    // ------------------------------------------------------------------
+    const pages = await downloadAndProcessPDF(fileKey);
 
-    // 2. Split and segment the pdf into smaller documents
-    const documents = await Promise.all(docs.map(prepareDocument));
+    // ------------------------------------------------------------------
+    // 2. Prepare smaller text chunks for embedding (approx. 1-2k chars)
+    // ------------------------------------------------------------------
+    const documents = (await Promise.all(pages.map(prepareDocument))).flat();
 
-    // 3. Vectorise and embed individual documents
-    const vectors = await Promise.all(
-      documents.flat().map(async (doc) => {
-        const embeddings = await getEmbeddings(doc.pageContent);
-        const hash = createDocumentHash(doc.pageContent);
+    // ------------------------------------------------------------------
+    // 3. Generate embeddings for each chunk – sequentially to respect
+    //    OpenAI rate-limits. In production you may parallelise with a pool
+    //    & exponential back-off. Here we keep it simple.
+    // ------------------------------------------------------------------
+    const vectors = [] as {
+      id: string;
+      values: number[];
+      metadata: { text: string; pageNumber: number };
+    }[];
 
-        return {
-          id: hash,
-          values: embeddings,
-          metadata: {
-            text: doc.metadata.text,
-            pageNumber: doc.metadata.pageNumber,
-          },
-        };
-      })
-    );
+    for (const doc of documents) {
+      const embedding = await getEmbeddings(doc.pageContent);
+      const id = createDocumentHash(doc.pageContent);
 
-    // 4. Upload to pinecone
+      vectors.push({
+        id,
+        values: embedding,
+        metadata: {
+          text: doc.metadata.text,
+          pageNumber: doc.metadata.pageNumber,
+        },
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Upsert vectors to Pinecone – batch to 100 vectors/request to stay
+    //    within API limits.
+    // ------------------------------------------------------------------
     const client = await getPineconeClient();
-    const pineconeIndex = await client.index("chatpdf");
-    const namespace = pineconeIndex.namespace(convertToAscii(fileKey));
+    const index = await client.index("chatpdf");
+    const namespace = index.namespace(convertToAscii(fileKey));
 
-    console.log("inserting vectors into pinecone");
-    await namespace.upsert(vectors);
+    // Clear previous vectors for this file to avoid duplicates / stale data.
+    try {
+      await namespace.deleteAll();
+    } catch (err) {
+      // Not fatal – e.g. namespace may not exist yet.
+    }
 
-    return documents[0];
+    const BATCH_SIZE = 100;
+    console.log(`Inserting ${vectors.length} vectors into Pinecone`);
+    for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
+      const batch = vectors.slice(i, i + BATCH_SIZE);
+      await namespace.upsert(batch);
+    }
+
+    return documents; // return processed chunks for optional post-processing
   } catch (error) {
     console.error("Error in loadS3IntoPinecone:", error);
     throw error;
@@ -121,18 +147,39 @@ export async function getMatchesFromEmbeddings(
 }
 
 export async function getContext(query: string, fileKey: string) {
-  const queryEmbeddings = await getEmbeddings(query);
-  const matches = await getMatchesFromEmbeddings(queryEmbeddings, fileKey);
+  try {
+    // ------------------------------------------------------------------
+    // 1. Embed the user query
+    // ------------------------------------------------------------------
+    const queryEmbeddings = await getEmbeddings(query);
 
-  const qualifyingDocs = matches.filter(
-    (match) => match.score && match.score > 0.7
-  );
+    // ------------------------------------------------------------------
+    // 2. Fetch the most relevant chunks from Pinecone
+    // ------------------------------------------------------------------
+    const matches = await getMatchesFromEmbeddings(queryEmbeddings, fileKey);
 
-  type Metadata = {
-    text: string;
-    pageNumber: number;
-  };
+    // ------------------------------------------------------------------
+    // 3. Filter low-score matches & assemble context string
+    // ------------------------------------------------------------------
+    const CONTEXT_SCORE_THRESHOLD = 0.75;
+    const qualifying = matches.filter(
+      (m) => (m.score ?? 0) >= CONTEXT_SCORE_THRESHOLD
+    );
 
-  let docs = qualifyingDocs.map((match) => (match.metadata as Metadata).text);
-  return docs.join("\n").substring(0, 3000);
+    if (!qualifying.length) return ""; // No relevant context found
+
+    type Metadata = { text: string; pageNumber: number };
+
+    const context = qualifying
+      .map((m) => (m.metadata as Metadata).text)
+      // Remove duplicate strings while preserving order
+      .filter((text, idx, arr) => arr.indexOf(text) === idx)
+      .join("\n---\n");
+
+    // Cap context to ~3000 chars to stay within OpenAI prompt limits
+    return context.slice(0, 3000);
+  } catch (error) {
+    console.error("Error getting context from Pinecone", error);
+    return "";
+  }
 }
