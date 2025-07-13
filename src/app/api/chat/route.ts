@@ -4,6 +4,68 @@ import { db } from "@/lib/db";
 import { chats, messages } from "@/lib/db/schema";
 import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
+
+const ChatSchema = z.object({
+  chatId: z.number().int().positive(),
+  message: z.string().min(1),
+});
+
+// Utility to parse the chunked SSE stream returned by OpenAI when `stream: true`.
+// It yields incremental content strings.
+function streamOpenAIChunks(stream: ReadableStream<Uint8Array>) {
+  const decoder = new TextDecoder("utf-8");
+  const encoder = new TextEncoder();
+
+  let buffer = "";
+  let accumulated = "";
+
+  const readable = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = stream.getReader();
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? ""; // keep last partial line in buffer
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const dataStr = trimmed.replace("data:", "").trim();
+
+            if (dataStr === "[DONE]") {
+              controller.close();
+              return;
+            }
+
+            let json;
+            try {
+              json = JSON.parse(dataStr);
+            } catch (_) {
+              continue; // malformed line – skip
+            }
+
+            const content = json.choices?.[0]?.delta?.content ?? "";
+            if (content) {
+              accumulated += content;
+              controller.enqueue(encoder.encode(content));
+            }
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+
+  return { readable, getAccumulated: () => accumulated };
+}
 
 export async function POST(req: NextRequest) {
   const { userId } = await auth();
@@ -12,11 +74,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  try {
-    const body = await req.json();
-    const { chatId, message } = body;
+  const json = await req.json();
 
-    // Get the chat details to find the file key
+  const parseRes = ChatSchema.safeParse(json);
+  if (!parseRes.success) {
+    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  }
+
+  const { chatId, message } = parseRes.data;
+
+  try {
+    // ------------------------------------------------------------------
+    // Verify chat belongs to user & obtain file key
+    // ------------------------------------------------------------------
     const chat = await db
       .select()
       .from(chats)
@@ -27,30 +97,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Chat not found" }, { status: 404 });
     }
 
-    // Save the user message to the database
+    // ------------------------------------------------------------------
+    // Persist user's message immediately (fire-and-forget)
+    // ------------------------------------------------------------------
     await db.insert(messages).values({
-      chatId: chatId,
+      chatId,
       content: message,
       role: "user",
     });
 
-    // Get relevant context from Pinecone
+    // ------------------------------------------------------------------
+    // Retrieve RAG context from Pinecone
+    // ------------------------------------------------------------------
     const context = await getContext(message, chat[0].fileKey);
 
-    // Create a prompt for the AI with context
-    const prompt = `
-      You are a helpful AI assistant that answers questions about PDF documents.
-      
-      Context from the document:
-      ${context}
-      
-      User question: ${message}
-      
-      Please provide a helpful and accurate answer based on the context provided. If the context doesn't contain relevant information, please say so.
-    `;
+    // ------------------------------------------------------------------
+    // Build conversation prompt
+    // ------------------------------------------------------------------
+    const prompt = `You are a helpful AI assistant that answers questions about PDF documents.\n\nContext from the document:\n${context}\n\nUser question: ${message}\n\nPlease provide a concise answer based on the context. If the context doesn't contain relevant information, say so.`;
 
-    // Call OpenAI API for the response
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    // ------------------------------------------------------------------
+    // Call OpenAI with streaming enabled
+    // ------------------------------------------------------------------
+    const openaiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -58,32 +127,41 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: prompt }],
+        stream: true,
         temperature: 0.7,
+        messages: [{ role: "user", content: prompt }],
       }),
     });
 
-    const aiResponse = await response.json();
-    const aiMessage =
-      aiResponse.choices[0]?.message?.content ||
-      "I couldn't generate a response.";
+    if (!openaiRes.ok || !openaiRes.body) {
+      throw new Error(`OpenAI request failed with status ${openaiRes.status}`);
+    }
 
-    // Save the AI response to the database
-    await db.insert(messages).values({
-      chatId: chatId,
-      content: aiMessage,
-      role: "system",
-    });
+    const { readable, getAccumulated } = streamOpenAIChunks(openaiRes.body);
 
-    return NextResponse.json({
-      message: aiMessage,
-      context: context,
+    // When the streaming is done, store the AI's full message in DB.
+    readable
+      .pipeTo(new WritableStream({
+        write() {},
+        close() {
+          const aiMessage = getAccumulated();
+          db.insert(messages)
+            .values({ chatId, content: aiMessage, role: "system" })
+            .catch(console.error);
+        },
+      }))
+      .catch(console.error);
+
+    // Return streaming response to client
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+        "Cache-Control": "no-cache",
+      },
     });
   } catch (error) {
     console.error("Error in chat:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
 }
