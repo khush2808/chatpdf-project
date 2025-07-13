@@ -35,47 +35,12 @@ export const getPineconeClient = async () => {
 };
 
 export async function loadS3IntoPinecone(fileKey: string) {
-  // Import the PDF processor module dynamically (server-only)
-  const { downloadAndProcessPDF, prepareDocument, createDocumentHash } =
-    await import("./pdf-processor");
+  // TODO: Implement PDF processing and Pinecone integration
+  console.log("loadS3IntoPinecone called for file:", fileKey);
 
-  try {
-    // 1. Download and parse PDF
-    const docs = await downloadAndProcessPDF(fileKey);
-
-    // 2. Split and segment the pdf into smaller documents
-    const documents = await Promise.all(docs.map(prepareDocument));
-
-    // 3. Vectorise and embed individual documents
-    const vectors = await Promise.all(
-      documents.flat().map(async (doc) => {
-        const embeddings = await getEmbeddings(doc.pageContent);
-        const hash = createDocumentHash(doc.pageContent);
-
-        return {
-          id: hash,
-          values: embeddings,
-          metadata: {
-            text: doc.metadata.text,
-            pageNumber: doc.metadata.pageNumber,
-          },
-        };
-      })
-    );
-
-    // 4. Upload to pinecone
-    const client = await getPineconeClient();
-    const pineconeIndex = await client.index("chatpdf");
-    const namespace = pineconeIndex.namespace(convertToAscii(fileKey));
-
-    console.log("inserting vectors into pinecone");
-    await namespace.upsert(vectors);
-
-    return documents[0];
-  } catch (error) {
-    console.error("Error in loadS3IntoPinecone:", error);
-    throw error;
-  }
+  throw new Error(
+    "PDF processing not yet implemented - will be added in next phase"
+  );
 }
 
 export async function getEmbeddings(text: string) {

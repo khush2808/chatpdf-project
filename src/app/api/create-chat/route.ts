@@ -1,52 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadS3IntoPinecone } from "@/lib/pinecone";
-import { db } from "@/lib/db";
-import { chats } from "@/lib/db/schema";
-import { getS3Url } from "@/lib/s3";
-import { auth } from "@clerk/nextjs/server";
 
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
-    const body = await req.json();
-    const { file_key, file_name } = body;
-
-    console.log("Processing file:", file_key, file_name);
-
-    // Load the PDF into Pinecone (this processes the PDF and creates embeddings)
-    const pages = await loadS3IntoPinecone(file_key);
-
-    // Create a new chat entry in the database
-    const chat_id = await db
-      .insert(chats)
-      .values({
-        fileKey: file_key,
-        pdfName: file_name,
-        pdfUrl: getS3Url(file_key),
-        userId: userId,
-      })
-      .returning({
-        insertedId: chats.id,
-      });
-
-    console.log("Chat created with ID:", chat_id[0].insertedId);
+    // TODO: Implement PDF processing and chat creation
+    console.log("Create chat API called - PDF processing not yet implemented");
 
     return NextResponse.json(
       {
-        chat_id: chat_id[0].insertedId,
-        message: "PDF processed and chat created successfully",
+        success: false,
+        message: "PDF processing functionality will be implemented soon",
       },
-      { status: 200 }
-    );
+      { status: 501 }
+    ); // 501 Not Implemented
   } catch (error) {
-    console.error("Error processing PDF:", error);
+    console.error("Error in create-chat API:", error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

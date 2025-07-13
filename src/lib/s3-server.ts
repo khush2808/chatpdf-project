@@ -7,15 +7,15 @@ import { Readable } from "stream";
 export async function downloadFromS3(file_key: string): Promise<string> {
   try {
     const s3Client = new S3Client({
-      region: "ap-southeast-1",
+      region: process.env.S3_REGION || "ap-southeast-1",
       credentials: {
-        accessKeyId: process.env.NEXT_PUBLIC_S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.NEXT_PUBLIC_S3_SECRET_ACCESS_KEY!,
+        accessKeyId: process.env.S3_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!,
       },
     });
 
     const command = new GetObjectCommand({
-      Bucket: process.env.NEXT_PUBLIC_S3_BUCKET_NAME!,
+      Bucket: process.env.S3_BUCKET_NAME!,
       Key: file_key,
     });
 
@@ -54,4 +54,11 @@ export async function downloadFromS3(file_key: string): Promise<string> {
     console.error("Error downloading from S3:", error);
     throw error;
   }
+}
+
+export function getS3Url(file_key: string) {
+  const bucket = process.env.S3_BUCKET_NAME;
+  const region = process.env.S3_REGION || "ap-southeast-1";
+  const url = `https://${bucket}.s3.${region}.amazonaws.com/${file_key}`;
+  return url;
 }

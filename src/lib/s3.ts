@@ -1,45 +1,40 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+// Client-side S3 utilities - now using secure server-side API
 
 export async function uploadToS3(
   file: File
-): Promise<{ file_key: string; file_name: string } | { error: string }> {
+): Promise<
+  { file_key: string; file_name: string; file_size: number } | { error: string }
+> {
   try {
-    // Configure AWS S3 Client
-    const s3Client = new S3Client({
-      region: "ap-southeast-1",
-      credentials: {
-        accessKeyId: process.env.NEXT_PUBLIC_S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.NEXT_PUBLIC_S3_SECRET_ACCESS_KEY!,
-      },
+    // Create FormData for file upload
+    const formData = new FormData();
+    formData.append("file", file);
+
+    // Upload via secure server-side API
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
     });
 
-    const file_key =
-      "uploads/" + Date.now().toString() + file.name.replace(/\s+/g, "-");
+    const result = await response.json();
 
-    // Convert File to Uint8Array to avoid stream issues in the browser
-    const arrayBuffer = await file.arrayBuffer();
-    const bodyData = new Uint8Array(arrayBuffer);
-
-    const command = new PutObjectCommand({
-      Bucket: process.env.NEXT_PUBLIC_S3_BUCKET_NAME!,
-      Key: file_key,
-      Body: bodyData,
-      ContentType: file.type,
-    });
-
-    await s3Client.send(command);
+    if (!response.ok) {
+      return { error: result.error || "Upload failed" };
+    }
 
     return {
-      file_key,
-      file_name: file.name,
+      file_key: result.file_key,
+      file_name: result.file_name,
+      file_size: result.file_size,
     };
   } catch (error) {
-    console.error("Error uploading to S3:", error);
-    return Promise.reject({ error: "Failed to upload file to S3" });
+    console.error("Error uploading file:", error);
+    return { error: "Failed to upload file" };
   }
 }
 
 export function getS3Url(file_key: string) {
-  const url = `https://${process.env.NEXT_PUBLIC_S3_BUCKET_NAME}.s3.ap-southeast-1.amazonaws.com/${file_key}`;
-  return url;
+  // This will be handled server-side, but keeping for compatibility
+  // In production, you might want to use signed URLs for security
+  return `/api/file/${encodeURIComponent(file_key)}`;
 }
