@@ -17,7 +17,7 @@ export type FileChunk = {
         ModDate: Date;
         PDFFormatVersion: string;
       };
-      metadata: any;
+      metadata: Record<string, unknown>;
       totalPages: number;
     };
   };
@@ -86,7 +86,7 @@ export async function loadS3IntoPinecone(fileKey: string) {
     // Clear previous vectors for this file to avoid duplicates / stale data.
     try {
       await namespace.deleteAll();
-    } catch (err) {
+    } catch {
       // Not fatal – e.g. namespace may not exist yet.
     }
 

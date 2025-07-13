@@ -48,7 +48,7 @@ function streamOpenAIChunks(stream: ReadableStream<Uint8Array>) {
             let json;
             try {
               json = JSON.parse(dataStr);
-            } catch (_) {
+            } catch {
               continue; // malformed line – skip
             }
 

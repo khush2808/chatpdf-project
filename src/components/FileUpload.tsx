@@ -13,8 +13,7 @@ type UploadState = "idle" | "uploading" | "processing" | "error";
 const FileUpload = () => {
     const router = useRouter();
     const [status, setStatus] = React.useState<UploadState>("idle");
-    const [progress, setProgress] = React.useState(0);
-  const { mutate, isPending } = useMutation({
+  const { mutate } = useMutation({
     mutationFn: async ({
       file_key,
       file_name,
@@ -48,7 +47,6 @@ const FileUpload = () => {
 
       try {
         setStatus("uploading");
-        setProgress(0);
 
         // Currently we don't have granular progress from S3 client in-browser.
         // We present an indeterminate spinner; future enhancement could use

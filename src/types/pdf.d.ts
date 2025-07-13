@@ -4,6 +4,7 @@
  * "Cannot find module" errors when we perform dynamic imports in server-side
  * code (e.g. our PDF processing pipeline).
  */
+/* eslint-disable */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare module "pdf-parse" {

@@ -1,12 +1,12 @@
 import { downloadFromS3 } from "./s3-server";
 import fs from "fs";
 import md5 from "md5";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { truncateStringByBytes } from "./utils";
 
 // We will lazily import heavy, server-only dependencies so that they are **never** bundled
 // into the client build. These are only required inside a Node.js runtime.
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
-type PdfParse = typeof import("pdf-parse");
 
 /**
  * Internal helper that tries to extract text from a PDF via **pdfjs-dist**.
@@ -139,11 +139,11 @@ function splitText(
 }
 
 export async function prepareDocument(page: any) {
-  let { pageContent, metadata } = page;
-  pageContent = pageContent.replace(/\n/g, " ");
+  const { pageContent: originalContent, metadata } = page;
+  const cleanedContent = originalContent.replace(/\n/g, " ");
 
   // Split the document into smaller chunks
-  const chunks = splitText(pageContent, 1000, 200);
+  const chunks = splitText(cleanedContent, 1000, 200);
 
   return chunks.map((chunk) => ({
     pageContent: chunk,
