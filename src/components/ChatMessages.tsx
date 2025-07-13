@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { Send, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -20,6 +20,12 @@ type Message = {
 const ChatMessages = ({ chatId }: Props) => {
   const [input, setInput] = React.useState("");
   const [messages, setMessages] = React.useState<Message[]>([]);
+  const [isSending, setIsSending] = React.useState(false);
+
+  // Helper to append message safely
+  const appendMessage = React.useCallback((msg: Message) => {
+    setMessages((prev: Message[]) => [...prev, msg]);
+  }, []);
 
   // Fetch existing messages
   const { data, isLoading } = useQuery({
@@ -36,44 +42,81 @@ const ChatMessages = ({ chatId }: Props) => {
     }
   }, [data]);
 
-  // Send message mutation
-  const { mutate: sendMessage, isPending } = useMutation({
-    mutationFn: async (message: string) => {
-      const response = await axios.post("/api/chat", {
-        chatId,
-        message,
+  // Streaming send implementation
+  const sendMessage = async (content: string) => {
+    if (!content.trim()) return;
+
+    setIsSending(true);
+
+    // Optimistically add user message
+    const userMsg: Message = {
+      id: Date.now(),
+      content,
+      role: "user",
+      createdAt: new Date().toISOString(),
+    };
+    appendMessage(userMsg);
+
+    // Placeholder for AI message that we'll update as stream arrives
+    const aiMsgId = Date.now() + 1;
+    appendMessage({
+      id: aiMsgId,
+      content: "",
+      role: "system",
+      createdAt: new Date().toISOString(),
+    });
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ chatId, message: content }),
       });
-      return response.data;
-    },
-    onSuccess: (data) => {
-      // Add user message
-      const userMessage: Message = {
-        id: Date.now(),
-        content: input,
-        role: "user",
-        createdAt: new Date().toISOString(),
-      };
 
-      // Add AI response
-      const aiMessage: Message = {
-        id: Date.now() + 1,
-        content: data.message,
-        role: "system",
-        createdAt: new Date().toISOString(),
-      };
+      if (!response.ok || !response.body) {
+        throw new Error("Network response not ok");
+      }
 
-      setMessages((prev) => [...prev, userMessage, aiMessage]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+
+      let done = false;
+      let accumulated = "";
+
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
+        if (value) {
+          const chunk = decoder.decode(value);
+          accumulated += chunk;
+
+          // Update AI message content in state
+          setMessages((prev: Message[]) =>
+            prev.map((m: Message) =>
+              m.id === aiMsgId ? { ...m, content: accumulated } : m
+            )
+          );
+        }
+      }
+
+      // After stream completed, input can be cleared
       setInput("");
-    },
-    onError: () => {
+    } catch (err) {
+      console.error(err);
       toast.error("Error sending message");
-    },
-  });
+      // Remove placeholder AI message
+      setMessages((prev: Message[]) => prev.filter((m: Message) => m.id !== aiMsgId));
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    sendMessage(input);
+    if (isSending || !input.trim()) return;
+    void sendMessage(input);
   };
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
@@ -116,7 +159,7 @@ const ChatMessages = ({ chatId }: Props) => {
           </div>
         ))}
 
-        {isPending && (
+        {isSending && (
           <div className="flex justify-start">
             <div className="bg-gray-200 text-gray-900 rounded-lg px-3 py-2 max-w-sm lg:max-w-md">
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -138,12 +181,12 @@ const ChatMessages = ({ chatId }: Props) => {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask any question about your PDF..."
             className="w-full px-3 py-2 border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isPending}
+            disabled={isSending}
           />
           <Button
             className="rounded-l-none"
             type="submit"
-            disabled={isPending || !input.trim()}
+            disabled={isSending || !input.trim()}
           >
             <Send className="w-4 h-4" />
           </Button>
