@@ -5,6 +5,7 @@ import { chats } from "@/lib/db/schema";
 import { getS3Url } from "@/lib/s3";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { withCors } from "@/lib/cors";
 
 // ---------------------------------------------------------------------------
 // Request body schema – ensures we get the minimal data required to kick off
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return withCors(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   try {
@@ -58,18 +59,21 @@ export async function POST(req: NextRequest) {
 
     console.log("Chat created with ID:", chat_id);
 
-    return NextResponse.json(
+    return withCors(NextResponse.json(
       {
         chat_id,
         message: "PDF processed and chat created successfully",
       },
       { status: 200 }
-    );
+    ));
   } catch (error) {
     console.error("Error processing PDF:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
+    return withCors(
+      NextResponse.json({ error: "Internal Server Error" }, { status: 500 })
     );
   }
+}
+
+export function OPTIONS() {
+  return withCors(new Response(null, { status: 200 }));
 }

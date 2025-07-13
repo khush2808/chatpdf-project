@@ -3,6 +3,8 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { messages, chats } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { withCors } from "@/lib/cors";
+import { z } from "zod";
 
 export async function GET(
   req: NextRequest,
@@ -11,11 +13,17 @@ export async function GET(
   const { userId } = await auth();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return withCors(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   try {
-    const chatId = parseInt(params.chatId);
+    const ParamSchema = z.object({ chatId: z.string().regex(/^\d+$/) });
+    const parseRes = ParamSchema.safeParse(params);
+    if (!parseRes.success) {
+      return withCors(NextResponse.json({ error: "Invalid chatId" }, { status: 400 }));
+    }
+
+    const chatId = Number(parseRes.data.chatId);
 
     // Verify the chat belongs to the user
     const chat = await db
@@ -25,7 +33,7 @@ export async function GET(
       .limit(1);
 
     if (!chat.length) {
-      return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      return withCors(NextResponse.json({ error: "Chat not found" }, { status: 404 }));
     }
 
     // Get all messages for this chat
@@ -35,12 +43,13 @@ export async function GET(
       .where(eq(messages.chatId, chatId))
       .orderBy(messages.createdAt);
 
-    return NextResponse.json(chatMessages);
+    return withCors(NextResponse.json(chatMessages));
   } catch (error) {
     console.error("Error fetching messages:", error);
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
+    return withCors(NextResponse.json({ error: "Internal Server Error" }, { status: 500 }));
   }
+}
+
+export function OPTIONS() {
+  return withCors(new Response(null, { status: 200 }));
 }

@@ -5,6 +5,7 @@ import { chats, messages } from "@/lib/db/schema";
 import { auth } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { withCors } from "@/lib/cors";
 
 const ChatSchema = z.object({
   chatId: z.number().int().positive(),
@@ -71,14 +72,14 @@ export async function POST(req: NextRequest) {
   const { userId } = await auth();
 
   if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return withCors(NextResponse.json({ error: "Unauthorized" }, { status: 401 }));
   }
 
   const json = await req.json();
 
   const parseRes = ChatSchema.safeParse(json);
   if (!parseRes.success) {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    return withCors(NextResponse.json({ error: "Invalid payload" }, { status: 400 }));
   }
 
   const { chatId, message } = parseRes.data;
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
       .limit(1);
 
     if (!chat.length || chat[0].userId !== userId) {
-      return NextResponse.json({ error: "Chat not found" }, { status: 404 });
+      return withCors(NextResponse.json({ error: "Chat not found" }, { status: 404 }));
     }
 
     // ------------------------------------------------------------------
@@ -153,15 +154,19 @@ export async function POST(req: NextRequest) {
       .catch(console.error);
 
     // Return streaming response to client
-    return new Response(readable, {
+    return withCors(new Response(readable, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Transfer-Encoding": "chunked",
         "Cache-Control": "no-cache",
       },
-    });
+    }));
   } catch (error) {
     console.error("Error in chat:", error);
-    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    return withCors(NextResponse.json({ error: "Internal Server Error" }, { status: 500 }));
   }
+}
+
+export function OPTIONS() {
+  return withCors(new Response(null, { status: 200 }));
 }
