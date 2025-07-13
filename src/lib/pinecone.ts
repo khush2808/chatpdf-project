@@ -1,6 +1,6 @@
 import { Pinecone } from "@pinecone-database/pinecone";
 import { convertToAscii } from "./utils";
-import { downloadFromS3 } from "./s3";
+import { downloadFromS3 } from "./s3-server";
 import fs from "fs";
 import pdf from "pdf-parse";
 import md5 from "md5";
