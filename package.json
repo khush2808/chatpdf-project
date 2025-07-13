@@ -4,7 +4,6 @@
   "private": true,
   "scripts": {
     "dev": "cross-env NODE_OPTIONS='--max-old-space-size=8192' next dev --turbopack",
-
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -22,6 +21,7 @@
     "axios": "^1.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cross-env": "^7.0.3",
     "dotenv": "^17.2.0",
     "drizzle-kit": "^0.31.4",
     "drizzle-orm": "^0.44.2",
