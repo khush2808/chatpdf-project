@@ -52,9 +52,6 @@ async function parseWithPdfJs(filePath: string) {
  * pages of equal length.
  */
 async function parseWithPdfParse(filePath: string) {
-  // pdf-parse's default export is a function. We cast to `any` to avoid type
-  // issues because the library ships without typings.
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   const pdfParse: any = (await import("pdf-parse")).default;
   const buffer = fs.readFileSync(filePath);
   const data = await pdfParse(buffer);

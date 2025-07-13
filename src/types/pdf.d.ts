@@ -6,7 +6,6 @@
  */
 /* eslint-disable */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare module "pdf-parse" {
   const value: any;
   export default value;
@@ -14,7 +13,6 @@ declare module "pdf-parse" {
 
 // The pdfjs-dist legacy build does not ship accurate TypeScript declarations.
 // We declare it as "any" for now because we only use it internally.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare module "pdfjs-dist/legacy/build/pdf.mjs" {
   const value: any;
   export = value;
