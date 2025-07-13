@@ -4,7 +4,8 @@ import { promises as fs } from "fs";
 import md5 from "md5";
 import { getEmbeddings } from "./embeddings";
 import { convertToAscii } from "./utils";
-import { PDFLoader } from "@langchain/community/document_loaders/web/pdf";
+import { WebPDFLoader } from "@langchain/community/document_loaders/web/pdf";
+import { Document } from "@langchain/core/documents";
 
 export const getPineconeClient = () => {
   console.log("🔧 Initializing Pinecone client...");
@@ -126,13 +127,13 @@ export async function loadS3IntoPinecone(fileKey: string) {
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   console.log(`📄 Processing PDF buffer of size: ${buffer.length} bytes`);
   try {
-    // Use LangChain's PDFLoader to extract text from the PDF buffer
-    const loader = new PDFLoader(new Blob([buffer]), {
+    // Use LangChain's WebPDFLoader to extract text from the PDF buffer
+    const loader = new WebPDFLoader(new Blob([buffer]), {
       parsedItemSeparator: "\n",
     });
     const docs = await loader.load();
     // Concatenate all page texts
-    const fullText = docs.map((doc) => doc.pageContent).join("\n");
+    const fullText = docs.map((doc: Document) => doc.pageContent).join("\n");
     const cleanedText = fullText
       .replace(/\s+/g, " ")
       .replace(/\n\s*\n/g, "\n")
