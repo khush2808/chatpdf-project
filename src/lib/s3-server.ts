@@ -3,19 +3,20 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { Readable } from "stream";
+import { env } from "./env";
 
 export async function downloadFromS3(file_key: string): Promise<string> {
   try {
     const s3Client = new S3Client({
-      region: "ap-southeast-1",
+      region: env.AWS_REGION,
       credentials: {
-        accessKeyId: process.env.NEXT_PUBLIC_S3_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.NEXT_PUBLIC_S3_SECRET_ACCESS_KEY!,
+        accessKeyId: env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
       },
     });
 
     const command = new GetObjectCommand({
-      Bucket: process.env.NEXT_PUBLIC_S3_BUCKET_NAME!,
+      Bucket: env.AWS_BUCKET_NAME,
       Key: file_key,
     });
 
